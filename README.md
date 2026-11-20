@@ -94,6 +94,26 @@ to a temp folder. Code signing (below) is the main remaining step.
 - **macOS:** unsigned apps are blocked by Gatekeeper; users must right-click the app and choose **Open**. Signing with a Developer ID and notarizing (`codesign` + `notarytool`) removes this.
 - **Windows:** unsigned PyInstaller builds may trigger SmartScreen or Defender warnings. Sign them with an Authenticode certificate.
 
+## Releasing
+
+Releases are made by pushing a version tag; CI does the rest.
+
+1. Set `__version__` in `src/emt/__init__.py` (e.g. `"0.2.0"`) and commit.
+2. Tag that commit and push the tag:
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+3. CI builds all targets. If every job passes, the **release** job checks that the
+   tag matches `__version__`, then creates a **draft** release with all twelve
+   downloads attached. Its notes are `packaging/release-notes.md` (download table
+   and first-run tips), followed by notes generated from the commits since the
+   previous tag.
+4. On GitHub, open **Releases**, review the draft, edit the notes if needed, and click
+   **Publish release**. Nothing is public until then.
+
+Re-running the workflow for the same tag replaces the files on the existing draft.
+
 ## Platform notes
 
 | Topic | Notes |

@@ -131,3 +131,48 @@ jobs:
         with:
           name: emt-cli-linux-arm64
           path: dist/emt-cli-linux-arm64.tar.gz
+
+  release:
+    # Runs only for version tags (git tag v0.1.0 && git push origin v0.1.0), after every
+    # build passes. Creates a DRAFT release with all downloads attached; review it on the
+    # repo's Releases page and click Publish when ready.
+    name: Draft GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, cli-linux-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/emt/__init__.py)
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match __version__ \"$ver\" in src/emt/__init__.py"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -la release-files
+
+      - name: Create (or update) the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # Re-run of the workflow: replace the files on the existing release.
+            gh release upload "$GITHUB_REF_NAME" release-files/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-files/* \
+              --draft --verify-tag \
+              --title "EMT Multicast Tester ${GITHUB_REF_NAME#v}" \
+              --notes-file packaging/release-notes.md \
+              --generate-notes
+          fi
