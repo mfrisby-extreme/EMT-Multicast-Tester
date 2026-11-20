@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emt"
+dynamic = ["version"]
+description = "Cross-platform multicast send/receive test tool"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "ifaddr>=0.2",
+    "pyqtgraph>=0.13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+build = ["pyinstaller>=6.6"]
+
+[project.scripts]
+emt-cli = "emt.cli:main"
+
+[project.gui-scripts]
+emt = "emt.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "emt.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"emt.gui" = ["resources/*.svg", "resources/icons/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,133 @@
+name: build
+
+# Native builds for x86-64 and ARM64 on Windows, macOS and Linux.
+# PyInstaller can't cross-compile, and numpy has no universal2 macOS wheels,
+# so every OS/architecture pair gets its own runner. Each job builds both the
+# GUI and the CLI, except Linux ARM64 (see the `cli-linux-arm64` job).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64,   runner: windows-latest,   cli: true }
+          - { name: windows-arm64, runner: windows-11-arm,   cli: true }
+          - { name: macos-arm64,   runner: macos-latest,     cli: true }   # Apple Silicon
+          - { name: macos-x64,     runner: macos-15-intel,   cli: true }   # Intel Macs
+          # A Linux build needs at least the runner's glibc: 22.04 = glibc 2.35 (PySide6 x64 needs 2.34+).
+          - { name: linux-x64,     runner: ubuntu-22.04,     cli: true }
+          # PySide6's aarch64 wheels need glibc 2.39, so the ARM GUI builds on 24.04. Its CLI is built
+          # separately on 22.04 (job below) so it also runs on Raspberry Pi OS / Ubuntu 22.04.
+          - { name: linux-arm64,   runner: ubuntu-24.04-arm, cli: false }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Install
+        run: pip install -e ".[dev,build]"
+
+      - name: Test
+        run: pytest -v
+
+      - name: Build GUI and CLI
+        if: matrix.cli
+        run: python scripts/build.py
+
+      - name: Build GUI
+        if: ${{ !matrix.cli }}
+        run: python scripts/build.py --gui
+
+      - name: Smoke-test the built apps
+        shell: bash
+        env:
+          EMT_SMOKE_TEST: "1"        # GUI opens its window, then quits
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          case "$RUNNER_OS" in
+            macOS)   dist/EMT.app/Contents/MacOS/EMT ;;
+            Windows) dist/EMT/EMT.exe ;;
+            *)       dist/EMT/EMT ;;
+          esac
+          if [ "${{ matrix.cli }}" = "true" ]; then
+            cli=dist/emt-cli; [ "$RUNNER_OS" = "Windows" ] && cli=dist/emt-cli/emt-cli.exe  # folder build on Windows
+            "$cli" --version && "$cli" ifaces
+          fi
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          ditto -c -k --keepParent EMT.app "EMT-${{ matrix.name }}.zip"
+          tar czf "emt-cli-${{ matrix.name }}.tar.gz" emt-cli
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/EMT -DestinationPath "dist/EMT-${{ matrix.name }}.zip"
+          Compress-Archive -Path dist/emt-cli -DestinationPath "dist/emt-cli-${{ matrix.name }}.zip"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd dist
+          tar czf "EMT-${{ matrix.name }}.tar.gz" EMT
+          if [ "${{ matrix.cli }}" = "true" ]; then tar czf "emt-cli-${{ matrix.name }}.tar.gz" emt-cli; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emt-${{ matrix.name }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+  cli-linux-arm64:
+    # CLI only, built on an older system than the ARM GUI so it runs on more
+    # ARM Linux machines (glibc 2.35+: Raspberry Pi OS 12, Ubuntu 22.04). No Qt needed.
+    name: linux-arm64 CLI
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (no Qt)
+        run: |
+          pip install --no-deps -e .
+          pip install ifaddr pytest pyinstaller
+
+      - name: Test engine
+        run: pytest -v tests/test_packet.py tests/test_stats.py tests/test_loopback.py
+
+      - name: Build CLI
+        run: python scripts/build.py --cli
+
+      - name: Smoke-test the built CLI
+        run: dist/emt-cli --version && dist/emt-cli ifaces
+
+      - name: Package
+        run: tar czf dist/emt-cli-linux-arm64.tar.gz -C dist emt-cli
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emt-cli-linux-arm64
+          path: dist/emt-cli-linux-arm64.tar.gz
